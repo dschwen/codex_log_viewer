@@ -23,9 +23,14 @@ def render_reasoning(entry: dict) -> str:
         return ""
     content_html = "<br/>".join(texts)
     return f"""
-    <div class='block reasoning'>
-      <div class='label'>Reasoning (summary only)</div>
-      <div class='text'>{content_html}</div>
+    <div class='block reasoning collapsible'>
+      <div class='label-row'>
+        <div class='label'>Reasoning (summary only)</div>
+        <button class='toggle' type='button' aria-expanded='true'>Collapse</button>
+      </div>
+      <div class='collapsible-content'>
+        <div class='text'>{content_html}</div>
+      </div>
     </div>
     """
 
@@ -101,9 +106,14 @@ def render_function_output(entry: dict) -> str:
         except Exception:
             body = str(body)
     return f"""
-    <div class='block func-output'>
-      <div class='label'>Function Output</div>
-      <pre class='code'>{esc(body)}</pre>
+    <div class='block func-output collapsible'>
+      <div class='label-row'>
+        <div class='label'>Function Output</div>
+        <button class='toggle' type='button' aria-expanded='true'>Collapse</button>
+      </div>
+      <div class='collapsible-content'>
+        <pre class='code'>{esc(body)}</pre>
+      </div>
     </div>
     """
 
@@ -144,11 +154,23 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, N
 .session .title { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
 .session .subtitle { color: #6b7280; margin-bottom: 8px; font-size: 13px; }
 
+/* Toolbar */
+.toolbar { display: flex; gap: 10px; align-items: center; margin: 12px 0 18px; font-size: 13px; }
+.toolbar a { color: #374151; background: #f3f4f6; border: 1px solid #e5e7eb; padding: 6px 10px; border-radius: 8px; text-decoration: none; }
+.toolbar a:hover { background: #eef2ff; border-color: #dbeafe; color: #1d4ed8; }
+
 /* Blocks */
 .block { border-radius: 12px; padding: 12px 14px; margin: 12px 0; border: 1px solid transparent; }
 .block .label { font-size: 12px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; opacity: 0.8; margin-bottom: 6px; }
 .block .text { white-space: normal; word-wrap: break-word; overflow-wrap: anywhere; }
 .code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12.5px; line-height: 1.45; background: rgba(0,0,0,0.02); border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; overflow: auto; max-height: 380px; }
+
+/* Collapsible */
+.label-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.toggle { font-size: 12px; border: 1px solid #e5e7eb; background: #ffffff; border-radius: 6px; padding: 4px 8px; color: #374151; cursor: pointer; }
+.toggle:hover { background: #f3f4f6; }
+.collapsible .collapsible-content { display: block; }
+.collapsible.collapsed .collapsible-content { display: none; }
 
 /* Pastel role/type colors */
 .user { background: #e8f0fe; border-color: #d2e3fc; }
@@ -218,6 +240,55 @@ def render_jsonl_to_html(filepath: str) -> str:
     except FileNotFoundError:
         raise
 
+    # Top toolbar with collapse/expand all
+    toolbar = """
+    <div class='toolbar'>
+      <a href="#" id="collapse-all">Collapse All</a>
+      <a href="#" id="expand-all">Expand All</a>
+    </div>
+    """
+
+    script_js = """
+  <script>
+    (function() {
+      function setCollapsed(el, collapsed) {
+        if (!el) return;
+        if (collapsed) el.classList.add('collapsed'); else el.classList.remove('collapsed');
+        var btn = el.querySelector('.toggle');
+        if (btn) {
+          btn.setAttribute('aria-expanded', String(!collapsed));
+          btn.textContent = collapsed ? 'Expand' : 'Collapse';
+        }
+      }
+
+      document.addEventListener('click', function(ev) {
+        var t = ev.target;
+        if (t && t.closest) {
+          var toggle = t.closest('.toggle');
+          if (toggle) {
+            ev.preventDefault();
+            var box = toggle.closest('.collapsible');
+            if (box) setCollapsed(box, !box.classList.contains('collapsed'));
+            return;
+          }
+          var collapseAll = t.closest('#collapse-all');
+          if (collapseAll) {
+            ev.preventDefault();
+            document.querySelectorAll('.collapsible').forEach(function(el){ setCollapsed(el, true); });
+            return;
+          }
+          var expandAll = t.closest('#expand-all');
+          if (expandAll) {
+            ev.preventDefault();
+            document.querySelectorAll('.collapsible').forEach(function(el){ setCollapsed(el, false); });
+            return;
+          }
+        }
+      }, false);
+    })();
+  </script>
+"""
+
     html_doc = f"""
 <!DOCTYPE html>
 <html lang='en'>
@@ -229,8 +300,10 @@ def render_jsonl_to_html(filepath: str) -> str:
 </head>
 <body>
   <div class='container'>
+    {toolbar}
     {''.join(b for b in blocks if b)}
   </div>
+""" + script_js + """
 </body>
 </html>
 """
