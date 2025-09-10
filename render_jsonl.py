@@ -212,11 +212,24 @@ def render_function_output(entry: dict) -> str:
     # Skip trivial confirmation after plan updates
     if isinstance(body, str) and body.strip() == "Plan updated":
         return ""
+    # Determine if output is large; collapse by default when very large
+    try:
+        char_thresh = int(os.environ.get("COLLAPSE_OUTPUT_CHAR_THRESHOLD", "15000"))
+    except Exception:
+        char_thresh = 15000
+    try:
+        line_thresh = int(os.environ.get("COLLAPSE_OUTPUT_LINE_THRESHOLD", "300"))
+    except Exception:
+        line_thresh = 300
+    is_large = (len(body) >= char_thresh) or (body.count("\n") + 1 >= line_thresh)
+    collapsed_class = " collapsed" if is_large else ""
+    aria_expanded = "false" if is_large else "true"
+    toggle_label = "Expand" if is_large else "Collapse"
     return f"""
-    <div class='block func-output collapsible'>
+    <div class='block func-output collapsible{collapsed_class}'>
       <div class='label-row'>
         <div class='label'>Function Output</div>
-        <button class='toggle' type='button' aria-expanded='true'>Collapse</button>
+        <button class='toggle' type='button' aria-expanded='{aria_expanded}'>{toggle_label}</button>
       </div>
       <div class='collapsible-content'>
         <pre class='code'>{esc(body)}</pre>
