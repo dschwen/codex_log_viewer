@@ -3,6 +3,9 @@
 import json
 import sys
 import html
+import os
+import re
+from collections import defaultdict
 from pathlib import Path
 
 # Optional markdown rendering for reasoning blocks
@@ -392,9 +395,116 @@ def render_jsonl_to_html(filepath: str) -> str:
 
 
 def main(argv):
-    if len(argv) < 2:
-        print("Usage: render_jsonl.py <your_codex_log.jsonl> [-o output.html]", file=sys.stderr)
+    def usage_and_exit():
+        print(
+            "Usage:\n"
+            "  render_jsonl.py <your_codex_log.jsonl> [-o output.html]\n"
+            "  render_jsonl.py --all [--sessions-dir DIR]",
+            file=sys.stderr,
+        )
         sys.exit(1)
+
+    if len(argv) < 2:
+        usage_and_exit()
+
+    # Batch mode: crawl ~/.codex/sessions and mirror outputs here
+    if argv[1] == "--all":
+        sessions_dir = None
+        if len(argv) >= 4 and argv[2] == "--sessions-dir":
+            sessions_dir = argv[3]
+        if sessions_dir is None:
+            sessions_dir = os.path.expanduser("~/.codex/sessions")
+
+        sessions_root = Path(sessions_dir)
+        if not sessions_root.exists():
+            print(f"Error: sessions directory not found: {sessions_root}", file=sys.stderr)
+            sys.exit(2)
+
+        dest_root = Path.cwd()
+
+        def parse_date_time_from_name(name: str):
+            # Expect names like rollout-2025-09-09T20-09-59-<uuid>.jsonl
+            m = re.search(r"(\d{4}-\d{2}-\d{2})T(\d{2}-\d{2}-\d{2})", name)
+            if m:
+                return m.group(1), m.group(2)
+            return None, None
+
+        index_items = []  # list of dicts with date, time, rel_html
+        for src in sessions_root.rglob("*.jsonl"):
+            rel = src.relative_to(sessions_root)
+            out_html = (dest_root / rel).with_suffix(".html")
+            out_html.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                html_doc = render_jsonl_to_html(str(src))
+                out_html.write_text(html_doc, encoding="utf-8")
+            except Exception as e:
+                print(f"Warning: failed to render {src}: {e}", file=sys.stderr)
+                continue
+
+            date_str, time_str = parse_date_time_from_name(src.name)
+            if not date_str:
+                # fallback to file modified time
+                try:
+                    ts = src.stat().st_mtime
+                    import datetime as _dt
+
+                    dt = _dt.datetime.fromtimestamp(ts)
+                    date_str = dt.strftime("%Y-%m-%d")
+                    time_str = dt.strftime("%H-%M-%S")
+                except Exception:
+                    date_str = "Unknown"
+                    time_str = src.stem[:8]
+
+            index_items.append({
+                "date": date_str,
+                "time": time_str or "",
+                "rel_html": str(out_html.relative_to(dest_root)).replace(os.sep, "/"),
+            })
+
+        # Group by date and sort by date/time descending
+        groups = defaultdict(list)
+        for it in index_items:
+            groups[it["date"]].append(it)
+        def sort_key(it):
+            return (it["time"], it["rel_html"])  # time sorts lexicographically HH-MM-SS
+        for d in groups:
+            groups[d].sort(key=sort_key, reverse=True)
+        dates_sorted = sorted(groups.keys(), reverse=True)
+
+        # Build index HTML
+        index_blocks = [
+            "<div class='session'><div class='title'>Codex Sessions</div><div class='subtitle'>Batch conversion from ~/.codex/sessions</div></div>"
+        ]
+        for d in dates_sorted:
+            index_blocks.append(f"<h2>{html.escape(d)}</h2>")
+            index_blocks.append("<ul>")
+            for it in groups[d]:
+                label = html.escape(it["time"]) if it["time"] else html.escape(Path(it["rel_html"]).name)
+                href = html.escape(it["rel_html"]) 
+                index_blocks.append(f"<li><a href='{href}'>{label}</a></li>")
+            index_blocks.append("</ul>")
+
+        index_doc = f"""
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+  <meta charset='utf-8' />
+  <meta name='viewport' content='width=device-width, initial-scale=1' />
+  <title>Codex Sessions — Index</title>
+  <style>{STYLE}</style>
+</head>
+<body>
+  <div class='container'>
+    {''.join(index_blocks)}
+  </div>
+</body>
+</html>
+"""
+        (dest_root / "index.html").write_text(index_doc, encoding="utf-8")
+        print(f"Converted {len(index_items)} files. Wrote index.html")
+        return
+
+    # Single-file mode
     input_path = argv[1]
     out_path = None
     if len(argv) >= 4 and argv[2] in ("-o", "--output"):

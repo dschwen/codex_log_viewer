@@ -31,7 +31,18 @@ python3 render_jsonl.py example.jsonl -o example.html
 python3 render_jsonl.py example.jsonl > example.html
 ```
 
-3) Open the HTML in your browser
+3) Batch convert all logs from ~/.codex/sessions
+
+```bash
+# mirrors the ~/.codex/sessions tree into the current directory,
+# converts every .jsonl to .html, and writes a top-level index.html
+python3 render_jsonl.py --all
+
+# optional: point to a different sessions dir
+python3 render_jsonl.py --all --sessions-dir /path/to/sessions
+```
+
+4) Open the HTML in your browser
 
 ```bash
 xdg-open example.html  # Linux
