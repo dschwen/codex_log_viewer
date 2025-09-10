@@ -5,6 +5,7 @@ import sys
 import html
 import os
 import re
+import base64
 from collections import defaultdict
 from pathlib import Path
 
@@ -86,15 +87,88 @@ def parse_json_string_maybe(s):
         return s, False
 
 
+def render_plan_update(args_obj: dict) -> str:
+    explanation = (args_obj or {}).get("explanation") or ""
+    plan_items = (args_obj or {}).get("plan") or []
+
+    def sym(status: str) -> str:
+        s = (status or "").lower()
+        if s == "completed":
+            return "✅"
+        if s == "in_progress":
+            return "⏳"
+        return "☐"  # pending or unknown
+
+    items_html = []
+    for it in plan_items:
+        step = (it or {}).get("step", "")
+        status = (it or {}).get("status", "pending")
+        items_html.append(f"<li><span class='plan-sym'>{sym(status)}</span> {esc(step)}</li>")
+
+    if MarkdownIt is not None and explanation:
+        md = MarkdownIt()
+        expl_html = md.render(explanation)
+    else:
+        expl_html = esc(explanation).replace("\n", "<br/>") if explanation else ""
+
+    return f"""
+    <div class='block plan'>
+      <div class='label'>Plan Update</div>
+      {('<div class="text markdown">' + expl_html + '</div>') if expl_html else ''}
+      <ul class='plan-list'>
+        {''.join(items_html)}
+      </ul>
+    </div>
+    """
+
+
 def render_function_call(entry: dict) -> str:
     name = entry.get("name", "function")
     args_raw = entry.get("arguments")
     args_obj, ok = parse_json_string_maybe(args_raw)
+
+    # Special: update_plan → checklist
+    if name == "update_plan" and ok and isinstance(args_obj, dict):
+        return render_plan_update(args_obj)
+
+    # Special: apply_patch diff highlighting
+    def extract_patch_from_command(cmd_list):
+        if not isinstance(cmd_list, list):
+            return None
+        if len(cmd_list) >= 2 and str(cmd_list[0]) == "apply_patch":
+            return str(cmd_list[1])
+        import re as _re
+        for part in cmd_list:
+            s = str(part)
+            m = _re.search(r"\*\*\* Begin Patch(.*)\*\*\* End Patch", s, flags=_re.DOTALL)
+            if m:
+                return "*** Begin Patch" + m.group(1) + "*** End Patch"
+        return None
+
     if ok and isinstance(args_obj, dict):
-        # Try to present command nicely if present (e.g., shell tool)
+        cmd = args_obj.get("command")
+        patch_text = extract_patch_from_command(cmd)
+        if patch_text is not None:
+            raw_b64 = base64.b64encode(patch_text.encode("utf-8")).decode("ascii")
+            return f"""
+    <div class='block func-call collapsible apply-patch' data-raw-b64='{esc(raw_b64)}'>
+      <div class='label-row'>
+        <div class='label'>Apply Patch</div>
+        <div class='actions'>
+          <button class='toggle' type='button' aria-expanded='true'>Collapse</button>
+          <button class='copy' type='button' title='Copy patch to clipboard'>Copy</button>
+        </div>
+      </div>
+      <div class='collapsible-content'>
+        <pre class='code diff'><code class='language-diff'>{esc(patch_text)}</code></pre>
+      </div>
+    </div>
+    """
+
+    # Default rendering of function call
+    if ok and isinstance(args_obj, dict):
         cmd = args_obj.get("command")
         if isinstance(cmd, list):
-            # Render like a shell command line
             display_cmd = " ".join(str(c) for c in cmd)
             body = f"$ {esc(display_cmd)}"
         else:
@@ -122,6 +196,9 @@ def render_function_output(entry: dict) -> str:
             body = json.dumps(body, indent=2)
         except Exception:
             body = str(body)
+    # Skip trivial confirmation after plan updates
+    if isinstance(body, str) and body.strip() == "Plan updated":
+        return ""
     return f"""
     <div class='block func-output collapsible'>
       <div class='label-row'>
@@ -214,6 +291,18 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, N
 
 .func-output { background: #f5f5f5; border-color: #e5e7eb; }
 .func-output .label { color: #374151; }
+
+.plan { background: #e0f2fe; border-color: #bae6fd; }
+.plan .label { color: #0284c7; }
+.plan-list { list-style: none; padding-left: 0; margin: 6px 0 0; }
+.plan-list li { margin: 4px 0; }
+.plan-sym { display: inline-block; width: 1.4em; }
+
+/* Apply patch tweaks */
+.apply-patch .actions { display: flex; gap: 6px; }
+.copy { font-size: 12px; border: 1px solid #e5e7eb; background: #ffffff; border-radius: 6px; padding: 4px 8px; color: #374151; cursor: pointer; }
+.copy:hover { background: #f3f4f6; }
+.code.diff, .markdown pre code.language-diff, pre.code > code.language-diff { line-height: 1.2; }
 
 /* Minor tweaks */
 a { color: #2563eb; text-decoration: none; }
@@ -319,6 +408,39 @@ def render_jsonl_to_html(filepath: str) -> str:
             document.querySelectorAll('.collapsible').forEach(function(el){ setCollapsed(el, false); });
             return;
           }
+
+          var copyBtn = t.closest('.copy');
+          if (copyBtn) {
+            ev.preventDefault();
+            var box = copyBtn.closest('.apply-patch');
+            if (!box) return;
+            var b64 = box.getAttribute('data-raw-b64') || '';
+            try {
+              var raw = atob(b64);
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(raw).then(function(){
+                  var old = copyBtn.textContent; copyBtn.textContent = 'Copied!';
+                  setTimeout(function(){ copyBtn.textContent = old; }, 1200);
+                }).catch(function(){
+                  // fallback
+                  var ta = document.createElement('textarea');
+                  ta.value = raw; document.body.appendChild(ta); ta.select();
+                  try { document.execCommand('copy'); } catch(e) {}
+                  document.body.removeChild(ta);
+                  var old = copyBtn.textContent; copyBtn.textContent = 'Copied!';
+                  setTimeout(function(){ copyBtn.textContent = old; }, 1200);
+                });
+              } else {
+                var ta = document.createElement('textarea');
+                ta.value = raw; document.body.appendChild(ta); ta.select();
+                try { document.execCommand('copy'); } catch(e) {}
+                document.body.removeChild(ta);
+                var old = copyBtn.textContent; copyBtn.textContent = 'Copied!';
+                setTimeout(function(){ copyBtn.textContent = old; }, 1200);
+              }
+            } catch (e) {}
+            return;
+          }
         }
       }, false);
 
@@ -360,7 +482,7 @@ def render_jsonl_to_html(filepath: str) -> str:
         return s;
       }
       function highlightAll() {
-        document.querySelectorAll('.markdown pre code').forEach(function(code){
+        document.querySelectorAll('.markdown pre code, pre.code > code[class*="language-"]').forEach(function(code){
           var cls = code.className || '';
           var m = cls.match(/language-([a-z0-9]+)/i);
           var lang = m ? m[1].toLowerCase() : '';
