@@ -20,6 +20,16 @@ def esc(text: str) -> str:
     """HTML-escape text, preserving Unicode (e.g., emoji)."""
     return html.escape(text, quote=False)
 
+_SCRIPT_TAG_RE = re.compile(r"(?is)<\s*/?\s*script\b")
+
+def sanitize_html(raw: str) -> str:
+    """Neutralize script tags that might slip through Markdown rendering.
+    Replaces the opening angle bracket of <script ...> and </script> with &lt;.
+    """
+    if not raw:
+        return raw
+    return _SCRIPT_TAG_RE.sub(lambda m: "&lt;" + m.group(0)[1:], raw)
+
 
 def render_reasoning(entry: dict) -> str:
     # Show only the redacted summary; hide encrypted content
@@ -32,8 +42,9 @@ def render_reasoning(entry: dict) -> str:
         return ""
     joined = "\n\n".join(raw_texts)
     if MarkdownIt is not None:
-        md = MarkdownIt()  # HTML disabled by default for safety
-        content_html = md.render(joined)
+        md = MarkdownIt("commonmark")
+        md.options["html"] = False  # explicit: do not allow raw HTML
+        content_html = sanitize_html(md.render(joined))
     else:
         content_html = esc(joined).replace("\n", "<br/>")
     return f"""
@@ -61,8 +72,9 @@ def render_message(entry: dict) -> str:
         texts.append(t)
     text = "\n\n".join(texts)
     if MarkdownIt is not None:
-        md = MarkdownIt()
-        text_html = md.render(text)
+        md = MarkdownIt("commonmark")
+        md.options["html"] = False
+        text_html = sanitize_html(md.render(text))
     else:
         text_html = esc(text).replace("\n", "<br/>")
     css_class = "user" if role == "user" else "assistant"
@@ -106,8 +118,9 @@ def render_plan_update(args_obj: dict) -> str:
         items_html.append(f"<li><span class='plan-sym'>{sym(status)}</span> {esc(step)}</li>")
 
     if MarkdownIt is not None and explanation:
-        md = MarkdownIt()
-        expl_html = md.render(explanation)
+        md = MarkdownIt("commonmark")
+        md.options["html"] = False
+        expl_html = sanitize_html(md.render(explanation))
     else:
         expl_html = esc(explanation).replace("\n", "<br/>") if explanation else ""
 
@@ -313,9 +326,10 @@ a:hover { text-decoration: underline; }
 .tok-com { color: #6b7280; font-style: italic; }
 .tok-kw  { color: #2563eb; }
 .tok-num { color: #7c3aed; }
-.tok-add { color: #065f46; background: #ecfdf5; display: block; padding: 2px 6px; border-radius: 4px; }
-.tok-del { color: #991b1b; background: #fef2f2; display: block; padding: 2px 6px; border-radius: 4px; }
-.tok-meta{ color: #1f2937; background: #e5e7eb; display: block; padding: 2px 6px; border-radius: 4px; }
+.tok-line { display: block; line-height: 1.2; padding: 2px 6px; margin: 0; }
+.tok-add  { color: #065f46; background: #ecfdf5; border-radius: 4px; }
+.tok-del  { color: #991b1b; background: #fef2f2; border-radius: 4px; }
+.tok-meta { color: #1f2937; background: #e5e7eb; border-radius: 4px; }
 """
 
 
@@ -451,12 +465,15 @@ def render_jsonl_to_html(filepath: str) -> str:
       function highlightText(text, lang) {
         var esc = escapeHtml(text);
         if (lang === 'diff') {
-          return esc.split('\n').map(function(l){
-            if (l.startsWith('+')) return "<span class='tok-add'>"+l+"</span>";
-            if (l.startsWith('-')) return "<span class='tok-del'>"+l+"</span>";
-            if (l.startsWith('@')) return "<span class='tok-meta'>"+l+"</span>";
-            return l;
-          }).join('\n');
+          var lines = esc.split('\n');
+          return lines.map(function(l){
+            var cls = 'tok-line';
+            if (l.startsWith('+')) cls += ' tok-add';
+            else if (l.startsWith('-')) cls += ' tok-del';
+            else if (l.startsWith('@')) cls += ' tok-meta';
+            else cls += ' tok-none';
+            return "<span class='" + cls + "'>" + l + "</span>";
+          }).join('');
         }
         var s = esc;
         // Strings
