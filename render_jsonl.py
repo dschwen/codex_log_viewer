@@ -5,6 +5,12 @@ import sys
 import html
 from pathlib import Path
 
+# Optional markdown rendering for reasoning blocks
+try:
+    from markdown_it import MarkdownIt  # type: ignore
+except Exception:  # pragma: no cover
+    MarkdownIt = None
+
 
 def esc(text: str) -> str:
     """HTML-escape text, preserving Unicode (e.g., emoji)."""
@@ -14,14 +20,18 @@ def esc(text: str) -> str:
 def render_reasoning(entry: dict) -> str:
     # Show only the redacted summary; hide encrypted content
     summary_parts = entry.get("summary") or []
-    texts = []
+    raw_texts = []
     for part in summary_parts:
         if part.get("type") == "summary_text":
-            # Replace newlines with <br/>
-            texts.append(esc(part.get("text", "")).replace("\n", "<br/>"))
-    if not texts:
+            raw_texts.append(part.get("text", ""))
+    if not raw_texts:
         return ""
-    content_html = "<br/>".join(texts)
+    joined = "\n\n".join(raw_texts)
+    if MarkdownIt is not None:
+        md = MarkdownIt()  # HTML disabled by default for safety
+        content_html = md.render(joined)
+    else:
+        content_html = esc(joined).replace("\n", "<br/>")
     return f"""
     <div class='block reasoning collapsible'>
       <div class='label-row'>
@@ -29,7 +39,7 @@ def render_reasoning(entry: dict) -> str:
         <button class='toggle' type='button' aria-expanded='true'>Collapse</button>
       </div>
       <div class='collapsible-content'>
-        <div class='text'>{content_html}</div>
+        <div class='text markdown'>{content_html}</div>
       </div>
     </div>
     """
@@ -46,13 +56,17 @@ def render_message(entry: dict) -> str:
             continue
         texts.append(t)
     text = "\n\n".join(texts)
-    text_html = esc(text).replace("\n", "<br/>")
+    if MarkdownIt is not None:
+        md = MarkdownIt()
+        text_html = md.render(text)
+    else:
+        text_html = esc(text).replace("\n", "<br/>")
     css_class = "user" if role == "user" else "assistant"
     label = "User" if role == "user" else "Assistant"
     return f"""
     <div class='block {css_class}'>
       <div class='label'>{label}</div>
-      <div class='text'>{text_html}</div>
+      <div class='text markdown'>{text_html}</div>
     </div>
     """
 
@@ -165,6 +179,16 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, N
 .block .text { white-space: normal; word-wrap: break-word; overflow-wrap: anywhere; }
 .code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12.5px; line-height: 1.45; background: rgba(0,0,0,0.02); border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; overflow: auto; max-height: 380px; }
 
+/* Markdown content styling */
+.markdown { font-size: 14px; }
+.markdown p { margin: 0.3em 0 0.8em; }
+.markdown h1, .markdown h2, .markdown h3 { margin: 0.6em 0 0.4em; line-height: 1.25; }
+.markdown ul, .markdown ol { padding-left: 1.3em; margin: 0.3em 0 0.8em; }
+.markdown code { background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px; padding: 0.1em 0.35em; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12.5px; }
+.markdown pre { background: rgba(0,0,0,0.02); border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; overflow: auto; }
+.markdown pre code { background: transparent; border: 0; padding: 0; display: block; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12.5px; }
+.markdown blockquote { border-left: 3px solid #e5e7eb; padding-left: 12px; color: #4b5563; margin: 0.3em 0 0.8em; }
+
 /* Collapsible */
 .label-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .toggle { font-size: 12px; border: 1px solid #e5e7eb; background: #ffffff; border-radius: 6px; padding: 4px 8px; color: #374151; cursor: pointer; }
@@ -191,6 +215,15 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, N
 /* Minor tweaks */
 a { color: #2563eb; text-decoration: none; }
 a:hover { text-decoration: underline; }
+ 
+/* Tiny highlighter token styles */
+.tok-str { color: #b45309; }
+.tok-com { color: #6b7280; font-style: italic; }
+.tok-kw  { color: #2563eb; }
+.tok-num { color: #7c3aed; }
+.tok-add { color: #065f46; background: #ecfdf5; display: block; padding: 2px 6px; border-radius: 4px; }
+.tok-del { color: #991b1b; background: #fef2f2; display: block; padding: 2px 6px; border-radius: 4px; }
+.tok-meta{ color: #1f2937; background: #e5e7eb; display: block; padding: 2px 6px; border-radius: 4px; }
 """
 
 
@@ -248,7 +281,7 @@ def render_jsonl_to_html(filepath: str) -> str:
     </div>
     """
 
-    script_js = """
+    script_js = r"""
   <script>
     (function() {
       function setCollapsed(el, collapsed) {
@@ -285,6 +318,54 @@ def render_jsonl_to_html(filepath: str) -> str:
           }
         }
       }, false);
+
+      // Tiny inline syntax highlighter
+      function escapeHtml(s) {
+        return s.replace(/[&<>]/g, function(c){ return c === '&' ? '&amp;' : (c === '<' ? '&lt;' : '&gt;'); });
+      }
+      function highlightText(text, lang) {
+        var esc = escapeHtml(text);
+        if (lang === 'diff') {
+          return esc.split('\n').map(function(l){
+            if (l.startsWith('+')) return "<span class='tok-add'>"+l+"</span>";
+            if (l.startsWith('-')) return "<span class='tok-del'>"+l+"</span>";
+            if (l.startsWith('@')) return "<span class='tok-meta'>"+l+"</span>";
+            return l;
+          }).join('\n');
+        }
+        var s = esc;
+        // Strings
+        s = s.replace(/'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"/g, function(m){ return "<span class='tok-str'>"+m+"</span>"; });
+        // Comments
+        if (lang === 'python' || lang === 'py' || lang === 'bash' || lang === 'sh' || lang === 'shell') {
+          s = s.replace(/(^|\s)(#.*)$/gm, function(_, p1, p2){ return p1 + "<span class='tok-com'>"+p2+"</span>"; });
+        }
+        // JSON booleans/null and numbers
+        if (lang === 'json') {
+          s = s.replace(/\b(true|false|null)\b/g, "<span class='tok-kw'>$1</span>");
+          s = s.replace(/\b-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g, "<span class='tok-num'>$&</span>");
+        }
+        // Python keywords
+        if (lang === 'python' || lang === 'py') {
+          var kw = /\b(False|True|None|def|class|return|if|elif|else|for|while|try|except|finally|with|as|import|from|pass|break|continue|yield|lambda|global|nonlocal|assert|raise|in|is|and|or|not)\b/g;
+          s = s.replace(kw, "<span class='tok-kw'>$1</span>");
+        }
+        // Shell options
+        if (lang === 'bash' || lang === 'sh' || lang === 'shell') {
+          s = s.replace(/(^|\s)(-[a-zA-Z][a-zA-Z0-9-]*)/g, "$1<span class='tok-kw'>$2</span>");
+        }
+        return s;
+      }
+      function highlightAll() {
+        document.querySelectorAll('.markdown pre code').forEach(function(code){
+          var cls = code.className || '';
+          var m = cls.match(/language-([a-z0-9]+)/i);
+          var lang = m ? m[1].toLowerCase() : '';
+          var txt = code.textContent || '';
+          code.innerHTML = highlightText(txt, lang);
+        });
+      }
+      document.addEventListener('DOMContentLoaded', highlightAll);
     })();
   </script>
 """
