@@ -6,6 +6,7 @@ import html
 import os
 import re
 import base64
+import datetime as _dt
 from collections import defaultdict
 from pathlib import Path
 
@@ -31,7 +32,28 @@ def sanitize_html(raw: str) -> str:
     return _SCRIPT_TAG_RE.sub(lambda m: "&lt;" + m.group(0)[1:], raw)
 
 
-def render_reasoning(entry: dict) -> str:
+def _pretty_timestamp(ts_raw) -> str:
+    """Format an ISO-like timestamp into 'YYYY-MM-DD HH:MM:SS'.
+    Falls back to the original string if parsing fails.
+    """
+    if not ts_raw:
+        return ""
+    s = str(ts_raw)
+    try:
+        # Handle trailing 'Z' as UTC
+        s2 = s.replace("Z", "+00:00") if isinstance(s, str) else s
+        dt = _dt.datetime.fromisoformat(s2)
+        # Keep provided timezone if any; just format date & time
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        # Fallback: best-effort extract
+        m = re.search(r"(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2}):(\d{2})", s)
+        if m:
+            return f"{m.group(1)} {m.group(2)}:{m.group(3)}:{m.group(4)}"
+        return s
+
+
+def render_reasoning(entry: dict, ts_inline: str = "") -> str:
     # Show only the redacted summary; hide encrypted content
     summary_parts = entry.get("summary") or []
     raw_texts = []
@@ -51,7 +73,10 @@ def render_reasoning(entry: dict) -> str:
     <div class='block reasoning collapsible'>
       <div class='label-row'>
         <div class='label'>Reasoning (summary only)</div>
-        <button class='toggle' type='button' aria-expanded='true'>Collapse</button>
+        <div class='actions'>
+          {ts_inline}
+          <button class='toggle' type='button' aria-expanded='true'>Collapse</button>
+        </div>
       </div>
       <div class='collapsible-content'>
         <div class='text markdown'>{content_html}</div>
@@ -60,7 +85,7 @@ def render_reasoning(entry: dict) -> str:
     """
 
 
-def render_message(entry: dict) -> str:
+def render_message(entry: dict, ts_inline: str = "") -> str:
     role = entry.get("role", "assistant")
     # Aggregate any text-like content items
     parts = entry.get("content") or []
@@ -81,7 +106,10 @@ def render_message(entry: dict) -> str:
     label = "User" if role == "user" else "Assistant"
     return f"""
     <div class='block {css_class}'>
-      <div class='label'>{label}</div>
+      <div class='label-row'>
+        <div class='label'>{label}</div>
+        <div class='actions'>{ts_inline}</div>
+      </div>
       <div class='text markdown'>{text_html}</div>
     </div>
     """
@@ -99,7 +127,7 @@ def parse_json_string_maybe(s):
         return s, False
 
 
-def render_plan_update(args_obj: dict) -> str:
+def render_plan_update(args_obj: dict, ts_inline: str = "") -> str:
     explanation = (args_obj or {}).get("explanation") or ""
     plan_items = (args_obj or {}).get("plan") or []
 
@@ -126,7 +154,10 @@ def render_plan_update(args_obj: dict) -> str:
 
     return f"""
     <div class='block plan'>
-      <div class='label'>Plan Update</div>
+      <div class='label-row'>
+        <div class='label'>Plan Update</div>
+        <div class='actions'>{ts_inline}</div>
+      </div>
       {('<div class="text markdown">' + expl_html + '</div>') if expl_html else ''}
       <ul class='plan-list'>
         {''.join(items_html)}
@@ -135,14 +166,14 @@ def render_plan_update(args_obj: dict) -> str:
     """
 
 
-def render_function_call(entry: dict) -> str:
+def render_function_call(entry: dict, ts_inline: str = "") -> str:
     name = entry.get("name", "function")
     args_raw = entry.get("arguments")
     args_obj, ok = parse_json_string_maybe(args_raw)
 
     # Special: update_plan → checklist
     if name == "update_plan" and ok and isinstance(args_obj, dict):
-        return render_plan_update(args_obj)
+        return render_plan_update(args_obj, ts_inline)
 
     # Special: apply_patch diff highlighting
     def extract_patch_from_command(cmd_list):
@@ -168,6 +199,7 @@ def render_function_call(entry: dict) -> str:
       <div class='label-row'>
         <div class='label'>Apply Patch</div>
         <div class='actions'>
+          {ts_inline}
           <button class='toggle' type='button' aria-expanded='true'>Collapse</button>
           <button class='copy' type='button' title='Copy patch to clipboard'>Copy</button>
         </div>
@@ -191,13 +223,16 @@ def render_function_call(entry: dict) -> str:
 
     return f"""
     <div class='block func-call'>
-      <div class='label'>Function Call: {esc(name)}</div>
+      <div class='label-row'>
+        <div class='label'>Function Call: {esc(name)}</div>
+        <div class='actions'>{ts_inline}</div>
+      </div>
       <pre class='code'>{body}</pre>
     </div>
     """
 
 
-def render_function_output(entry: dict) -> str:
+def render_function_output(entry: dict, ts_inline: str = "") -> str:
     out_raw = entry.get("output")
     out_obj, ok = parse_json_string_maybe(out_raw)
     if ok and isinstance(out_obj, dict) and "output" in out_obj:
@@ -229,7 +264,10 @@ def render_function_output(entry: dict) -> str:
     <div class='block func-output collapsible{collapsed_class}'>
       <div class='label-row'>
         <div class='label'>Function Output</div>
-        <button class='toggle' type='button' aria-expanded='{aria_expanded}'>{toggle_label}</button>
+        <div class='actions'>
+          {ts_inline}
+          <button class='toggle' type='button' aria-expanded='{aria_expanded}'>{toggle_label}</button>
+        </div>
       </div>
       <div class='collapsible-content'>
         <pre class='code'>{esc(body)}</pre>
@@ -238,7 +276,7 @@ def render_function_output(entry: dict) -> str:
     """
 
 
-def render_session_header(meta: dict, source_path: Path) -> str:
+def render_session_header(meta: dict, source_path: Path, ts_inline: str = "") -> str:
     # First line often contains session metadata
     parts = []
     if meta.get("id"):
@@ -257,7 +295,10 @@ def render_session_header(meta: dict, source_path: Path) -> str:
         return ""
     return f"""
     <div class='session'>
-      <div class='title'>Codex Session Log</div>
+      <div class='header-row'>
+        <div class='title'>Codex Session Log</div>
+        {ts_inline}
+      </div>
       <div class='subtitle'>{esc(str(source_path))}</div>
       {''.join(parts)}
     </div>
@@ -273,6 +314,7 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, N
 .session { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; margin-bottom: 20px; }
 .session .title { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
 .session .subtitle { color: #6b7280; margin-bottom: 8px; font-size: 13px; }
+.session .header-row { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
 
 /* Toolbar */
 .toolbar { display: flex; gap: 10px; align-items: center; margin: 12px 0 18px; font-size: 13px; }
@@ -293,6 +335,10 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, N
 .block .label { font-size: 12px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; opacity: 0.8; margin-bottom: 6px; }
 .block .text { white-space: normal; word-wrap: break-word; overflow-wrap: anywhere; }
 .code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12.5px; line-height: 1.45; background: rgba(0,0,0,0.02); border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px; overflow: auto; max-height: 380px; }
+/* Rows */
+.label-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.label-row .actions { display: flex; align-items: center; gap: 6px; }
+.ts-inline { font-size: 12px; color: #6b7280; opacity: 0.9; }
 
 /* Markdown content styling */
 .markdown { font-size: 14px; }
@@ -305,7 +351,6 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, N
 .markdown blockquote { border-left: 3px solid #e5e7eb; padding-left: 12px; color: #4b5563; margin: 0.3em 0 0.8em; }
 
 /* Collapsible */
-.label-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .toggle { font-size: 12px; border: 1px solid #e5e7eb; background: #ffffff; border-radius: 6px; padding: 4px 8px; color: #374151; cursor: pointer; }
 .toggle:hover { background: #f3f4f6; }
 .collapsible .collapsible-content { display: block; }
@@ -367,6 +412,7 @@ def render_jsonl_to_html(filepath: str) -> str:
     p = Path(filepath)
     blocks = []
     session_header_done = False
+    wrapped_mode = None  # Unknown until first non-empty, parsed line
     try:
         with p.open("r", encoding="utf-8") as f:
             for line in f:
@@ -374,7 +420,7 @@ def render_jsonl_to_html(filepath: str) -> str:
                 if not line:
                     continue
                 try:
-                    entry = json.loads(line)
+                    raw_obj = json.loads(line)
                 except json.JSONDecodeError:
                     # If any malformed line, show it raw in output section to avoid hard-fail
                     blocks.append(
@@ -382,9 +428,25 @@ def render_jsonl_to_html(filepath: str) -> str:
                     )
                     continue
 
+                # Detect wrapped format: { timestamp, payload }
+                if wrapped_mode is None:
+                    if isinstance(raw_obj, dict) and "payload" in raw_obj and "timestamp" in raw_obj:
+                        wrapped_mode = True
+                    else:
+                        wrapped_mode = False
+
+                if wrapped_mode:
+                    ts_raw = (raw_obj or {}).get("timestamp")
+                    entry = (raw_obj or {}).get("payload") or {}
+                    ts_pretty = _pretty_timestamp(ts_raw)
+                    ts_inline = f"<span class='ts-inline'>{esc(ts_pretty)}</span>" if ts_pretty else ""
+                else:
+                    entry = raw_obj
+                    ts_inline = ""
+
                 # Try to render session header from the very first meta-like entry
                 if not session_header_done and ("timestamp" in entry or "git" in entry or "instructions" in entry):
-                    blocks.append(render_session_header(entry, p))
+                    blocks.append(render_session_header(entry, p, ts_inline))
                     session_header_done = True
                     continue
 
@@ -394,13 +456,13 @@ def render_jsonl_to_html(filepath: str) -> str:
 
                 typ = entry.get("type")
                 if typ == "reasoning":
-                    blocks.append(render_reasoning(entry))
+                    blocks.append(render_reasoning(entry, ts_inline))
                 elif typ == "message":
-                    blocks.append(render_message(entry))
+                    blocks.append(render_message(entry, ts_inline))
                 elif typ == "function_call":
-                    blocks.append(render_function_call(entry))
+                    blocks.append(render_function_call(entry, ts_inline))
                 elif typ == "function_call_output":
-                    blocks.append(render_function_output(entry))
+                    blocks.append(render_function_output(entry, ts_inline))
                 else:
                     # Fallback generic renderer
                     blocks.append(

@@ -12,6 +12,7 @@ A tiny Python tool that turns Codex JSONL session logs into a clean, self‑cont
 - Fixed‑width blocks for function calls and outputs; long outputs scroll.
 - Tiny client‑side highlighter for code fences in Markdown (json, python, bash/sh, diff).
 - Hides encrypted reasoning content; shows only the summary text.
+- Supports both legacy JSONL events and the new wrapped format where each line is `{ "timestamp": ..., "payload": { ... } }`. In the wrapped format, each block shows the event timestamp in the top‑right.
 
 ## Getting Started
 
