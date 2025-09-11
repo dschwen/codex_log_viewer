@@ -13,6 +13,7 @@ A tiny Python tool that turns Codex JSONL session logs into a clean, self‑cont
 - Tiny client‑side highlighter for code fences in Markdown (json, python, bash/sh, diff).
 - Hides encrypted reasoning content; shows only the summary text.
 - Supports both legacy JSONL events and the new wrapped format where each line is `{ "timestamp": ..., "payload": { ... } }`. In the wrapped format, each block shows the event timestamp in the top‑right.
+- Handles new event kinds found in wrapped logs: `user_message`, `agent_message`, `agent_reasoning`, and `token_count` (token usage). Token usage renders as a structured block and can be toggled via the toolbar filter. The Token Usage filter is OFF by default.
 
 ## Getting Started
 

@@ -276,6 +276,48 @@ def render_function_output(entry: dict, ts_inline: str = "") -> str:
     """
 
 
+def render_token_usage(entry: dict, ts_inline: str = "") -> str:
+    info = (entry or {}).get("info") or {}
+    total = info.get("total_token_usage") or {}
+    last = info.get("last_token_usage") or {}
+    mcw = info.get("model_context_window")
+
+    def item_row(title: str, data: dict) -> str:
+        keys = [
+            ("input_tokens", "Input"),
+            ("cached_input_tokens", "Cached Input"),
+            ("output_tokens", "Output"),
+            ("reasoning_output_tokens", "Reasoning"),
+            ("total_tokens", "Total"),
+        ]
+        parts = []
+        for k, label in keys:
+            v = data.get(k)
+            if v is not None:
+                parts.append(f"<div class='kv'><span class='k'>{esc(label)}</span><span class='v'>{esc(str(v))}</span></div>")
+        if not parts:
+            return ""
+        return f"<div class='usage-section'><div class='usage-title'>{esc(title)}</div><div class='kv-list'>{''.join(parts)}</div></div>"
+
+    sections = []
+    sections.append(item_row("Total", total))
+    sections.append(item_row("Last Call", last))
+    if mcw is not None:
+        sections.append(f"<div class='usage-section'><div class='usage-title'>Model Context</div><div class='kv-list'><div class='kv'><span class='k'>Window</span><span class='v'>{esc(str(mcw))}</span></div></div></div>")
+
+    return f"""
+    <div class='block usage'>
+      <div class='label-row'>
+        <div class='label'>Token Usage</div>
+        <div class='actions'>{ts_inline}</div>
+      </div>
+      <div class='usage-body'>
+        {''.join(s for s in sections if s)}
+      </div>
+    </div>
+    """
+
+
 def render_session_header(meta: dict, source_path: Path, ts_inline: str = "") -> str:
     # First line often contains session metadata
     parts = []
@@ -384,6 +426,15 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, N
 .copy:hover { background: #f3f4f6; }
 .code.diff, .markdown pre code.language-diff, pre.code > code.language-diff { line-height: 1.2; }
 
+/* Token usage */
+.usage { background: #fef3c7; border-color: #fde68a; }
+.usage .label { color: #92400e; }
+.usage .usage-title { font-weight: 600; margin: 6px 0 4px; font-size: 13px; color: #92400e; }
+.usage .kv-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 6px 12px; }
+.usage .kv { background: #fff7ed; border: 1px solid #fde68a; border-radius: 6px; padding: 6px 8px; display: flex; justify-content: space-between; }
+.usage .kv .k { color: #6b7280; }
+.usage .kv .v { font-weight: 600; color: #374151; }
+
 /* Minor tweaks */
 a { color: #2563eb; text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -405,6 +456,7 @@ a:hover { text-decoration: underline; }
 .hide-func-call .block.func-call { display: none; }
 .hide-func-output .block.func-output { display: none; }
 .hide-plan .block.plan { display: none; }
+.hide-usage .block.usage { display: none; }
 """
 
 
@@ -463,6 +515,26 @@ def render_jsonl_to_html(filepath: str) -> str:
                     blocks.append(render_function_call(entry, ts_inline))
                 elif typ == "function_call_output":
                     blocks.append(render_function_output(entry, ts_inline))
+                elif typ == "user_message":
+                    # Normalize to legacy message shape
+                    norm = {
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": entry.get("message", "")}],
+                    }
+                    blocks.append(render_message(norm, ts_inline))
+                elif typ == "agent_message":
+                    norm = {
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": entry.get("message", "")}],
+                    }
+                    blocks.append(render_message(norm, ts_inline))
+                elif typ == "agent_reasoning":
+                    norm = {
+                        "summary": [{"type": "summary_text", "text": entry.get("text", "")}],
+                    }
+                    blocks.append(render_reasoning(norm, ts_inline))
+                elif typ == "token_count":
+                    blocks.append(render_token_usage(entry, ts_inline))
                 else:
                     # Fallback generic renderer
                     blocks.append(
@@ -483,6 +555,7 @@ def render_jsonl_to_html(filepath: str) -> str:
         <label class='filter-chip chip-func-call'><input type='checkbox' data-class='func-call' checked /> Calls</label>
         <label class='filter-chip chip-func-output'><input type='checkbox' data-class='func-output' checked /> Outputs</label>
         <label class='filter-chip chip-plan'><input type='checkbox' data-class='plan' checked /> Plans</label>
+        <label class='filter-chip'><input type='checkbox' data-class='usage' /> Token Usage</label>
       </div>
     </div>
     """
