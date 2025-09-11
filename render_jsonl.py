@@ -493,10 +493,12 @@ def render_jsonl_to_html(filepath: str) -> str:
                 if wrapped_mode:
                     ts_raw = (raw_obj or {}).get("timestamp")
                     entry = (raw_obj or {}).get("payload") or {}
+                    outer_type = (raw_obj or {}).get("type")
                     ts_pretty = _pretty_timestamp(ts_raw)
                     ts_inline = f"<span class='ts-inline'>{esc(ts_pretty)}</span>" if ts_pretty else ""
                 else:
                     entry = raw_obj
+                    outer_type = None
                     ts_inline = ""
 
                 # Try to render session header from the very first meta-like entry
@@ -519,6 +521,10 @@ def render_jsonl_to_html(filepath: str) -> str:
                 elif typ == "function_call_output":
                     blocks.append(render_function_output(entry, ts_inline))
                 elif typ == "user_message":
+                    # In wrapped logs, user_message often duplicates response_item.message.
+                    # Prefer response_item.message; skip event_msg duplicates.
+                    if wrapped_mode and outer_type == "event_msg":
+                        continue
                     # Normalize to legacy message shape
                     norm = {
                         "role": "user",
@@ -526,6 +532,8 @@ def render_jsonl_to_html(filepath: str) -> str:
                     }
                     blocks.append(render_message(norm, ts_inline))
                 elif typ == "agent_message":
+                    if wrapped_mode and outer_type == "event_msg":
+                        continue
                     norm = {
                         "role": "assistant",
                         "content": [{"type": "output_text", "text": entry.get("message", "")}],
