@@ -540,6 +540,9 @@ def render_jsonl_to_html(filepath: str) -> str:
                     }
                     blocks.append(render_message(norm, ts_inline))
                 elif typ == "agent_reasoning":
+                    if wrapped_mode and outer_type == "event_msg":
+                        # Skip duplicate reasoning from event_msg when a response_item.reasoning exists
+                        continue
                     norm = {
                         "summary": [{"type": "summary_text", "text": entry.get("text", "")}],
                     }
@@ -642,7 +645,8 @@ def render_jsonl_to_html(filepath: str) -> str:
         }
       }, false);
 
-      // Filters
+      // Filters with persistence
+      var FILTERS_KEY = 'codex_viewer_filters_v1';
       function applyFilterState() {
         document.querySelectorAll('.filters input[type="checkbox"][data-class]').forEach(function(cb){
           var cls = cb.getAttribute('data-class');
@@ -650,11 +654,32 @@ def render_jsonl_to_html(filepath: str) -> str:
           document.body.classList.toggle('hide-' + cls, !cb.checked);
         });
       }
+      function saveFilterState() {
+        var state = {};
+        document.querySelectorAll('.filters input[type="checkbox"][data-class]').forEach(function(cb){
+          var cls = cb.getAttribute('data-class');
+          if (cls) state[cls] = !!cb.checked;
+        });
+        try { localStorage.setItem(FILTERS_KEY, JSON.stringify(state)); } catch (e) {}
+      }
+      function loadFilterState() {
+        try {
+          var raw = localStorage.getItem(FILTERS_KEY);
+          if (!raw) return;
+          var state = JSON.parse(raw);
+          if (!state || typeof state !== 'object') return;
+          document.querySelectorAll('.filters input[type="checkbox"][data-class]').forEach(function(cb){
+            var cls = cb.getAttribute('data-class');
+            if (!cls) return;
+            if (state.hasOwnProperty(cls)) cb.checked = !!state[cls];
+          });
+        } catch (e) {}
+      }
       document.addEventListener('change', function(ev){
         var cb = ev.target && ev.target.closest && ev.target.closest('.filters input[type="checkbox"][data-class]');
-        if (cb) applyFilterState();
+        if (cb) { applyFilterState(); saveFilterState(); }
       });
-      document.addEventListener('DOMContentLoaded', applyFilterState);
+      document.addEventListener('DOMContentLoaded', function(){ loadFilterState(); applyFilterState(); });
 
       // Tiny inline syntax highlighter
       function escapeHtml(s) {
