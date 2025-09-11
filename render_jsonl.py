@@ -43,8 +43,11 @@ def _pretty_timestamp(ts_raw) -> str:
         # Handle trailing 'Z' as UTC
         s2 = s.replace("Z", "+00:00") if isinstance(s, str) else s
         dt = _dt.datetime.fromisoformat(s2)
-        # Keep provided timezone if any; just format date & time
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
+        # Convert to local timezone for display
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_dt.timezone.utc)
+        local_dt = dt.astimezone()  # system local time
+        return local_dt.strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         # Fallback: best-effort extract
         m = re.search(r"(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2}):(\d{2})", s)
