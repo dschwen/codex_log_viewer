@@ -278,6 +278,15 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, N
 .toolbar { display: flex; gap: 10px; align-items: center; margin: 12px 0 18px; font-size: 13px; }
 .toolbar a { color: #374151; background: #f3f4f6; border: 1px solid #e5e7eb; padding: 6px 10px; border-radius: 8px; text-decoration: none; }
 .toolbar a:hover { background: #eef2ff; border-color: #dbeafe; color: #1d4ed8; }
+.filters { display: inline-flex; gap: 8px; flex-wrap: wrap; margin-left: 12px; }
+.filter-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 8px; border: 1px solid #e5e7eb; background: #f9fafb; color: #111827; cursor: pointer; user-select: none; }
+.filter-chip input { accent-color: #2563eb; }
+.chip-user { background: #e8f0fe; border-color: #d2e3fc; }
+.chip-assistant { background: #e6f4ea; border-color: #ccead6; }
+.chip-reasoning { background: #f3e8ff; border-color: #e9d5ff; }
+.chip-func-call { background: #fff7e6; border-color: #ffe8bf; }
+.chip-func-output { background: #f5f5f5; border-color: #e5e7eb; }
+.chip-plan { background: #e0f2fe; border-color: #bae6fd; }
 
 /* Blocks */
 .block { border-radius: 12px; padding: 12px 14px; margin: 12px 0; border: 1px solid transparent; }
@@ -343,6 +352,14 @@ a:hover { text-decoration: underline; }
 .tok-add  { color: #065f46; background: #ecfdf5; border-radius: 4px; }
 .tok-del  { color: #991b1b; background: #fef2f2; border-radius: 4px; }
 .tok-meta { color: #1f2937; background: #e5e7eb; border-radius: 4px; }
+
+/* Filters toggle body classes to hide certain blocks */
+.hide-user .block.user { display: none; }
+.hide-assistant .block.assistant { display: none; }
+.hide-reasoning .block.reasoning { display: none; }
+.hide-func-call .block.func-call { display: none; }
+.hide-func-output .block.func-output { display: none; }
+.hide-plan .block.plan { display: none; }
 """
 
 
@@ -397,6 +414,14 @@ def render_jsonl_to_html(filepath: str) -> str:
     <div class='toolbar'>
       <a href="#" id="collapse-all">Collapse All</a>
       <a href="#" id="expand-all">Expand All</a>
+      <div class='filters' title='Show/Hide blocks'>
+        <label class='filter-chip chip-user'><input type='checkbox' data-class='user' checked /> User</label>
+        <label class='filter-chip chip-assistant'><input type='checkbox' data-class='assistant' checked /> Assistant</label>
+        <label class='filter-chip chip-reasoning'><input type='checkbox' data-class='reasoning' checked /> Reasoning</label>
+        <label class='filter-chip chip-func-call'><input type='checkbox' data-class='func-call' checked /> Calls</label>
+        <label class='filter-chip chip-func-output'><input type='checkbox' data-class='func-output' checked /> Outputs</label>
+        <label class='filter-chip chip-plan'><input type='checkbox' data-class='plan' checked /> Plans</label>
+      </div>
     </div>
     """
 
@@ -470,6 +495,20 @@ def render_jsonl_to_html(filepath: str) -> str:
           }
         }
       }, false);
+
+      // Filters
+      function applyFilterState() {
+        document.querySelectorAll('.filters input[type="checkbox"][data-class]').forEach(function(cb){
+          var cls = cb.getAttribute('data-class');
+          if (!cls) return;
+          document.body.classList.toggle('hide-' + cls, !cb.checked);
+        });
+      }
+      document.addEventListener('change', function(ev){
+        var cb = ev.target && ev.target.closest && ev.target.closest('.filters input[type="checkbox"][data-class]');
+        if (cb) applyFilterState();
+      });
+      document.addEventListener('DOMContentLoaded', applyFilterState);
 
       // Tiny inline syntax highlighter
       function escapeHtml(s) {
