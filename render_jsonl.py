@@ -512,6 +512,9 @@ def render_jsonl_to_html(filepath: str) -> str:
                     continue
 
                 typ = entry.get("type")
+                if typ == "turn_context" or (outer_type == "turn_context" and wrapped_mode):
+                    # Context metadata (current cwd, policies, etc.) is not user-facing content.
+                    continue
                 if typ == "reasoning":
                     blocks.append(render_reasoning(entry, ts_inline))
                 elif typ == "message":
